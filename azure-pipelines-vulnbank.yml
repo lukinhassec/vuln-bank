@@ -5,9 +5,32 @@ variables:
   VULN_BANK_PORT: 5000
 jobs:
   - job: VulnBankLab
-    displayName: 'Vuln Bank + ZAP DAST'
+    displayName: 'Vuln Bank + Horusec SAST + ZAP DAST'
     timeoutInMinutes: 59
     steps:
+    - script: |
+        curl -fsSL https://raw.githubusercontent.com/ZupIT/horusec/main/deployments/scripts/install.sh | bash -s latest-beta
+      displayName: 'Instalar Horusec'
+
+    - script: |
+        mkdir -p $(Build.ArtifactStagingDirectory)/horusec-output
+        horusec start -p . \
+          -o json \
+          -O $(Build.ArtifactStagingDirectory)/horusec-output/horusec-report.json \
+          --disable-docker=false \
+          --ignore-severity="INFO" \
+          -e true
+      displayName: 'Horusec SAST Scan'
+      continueOnError: true
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/horusec-output'
+        ArtifactName: 'horusec-reports'
+        publishLocation: 'Container'
+      displayName: 'Publicar relatório Horusec'
+      condition: always()
+
     - script: |
         git clone https://github.com/Commando-X/vuln-bank.git
         cd vuln-bank
@@ -16,10 +39,12 @@ jobs:
         sleep 30
         curl -sf http://localhost:$(VULN_BANK_PORT) > /dev/null && echo "Vuln Bank UP" || exit 1
       displayName: 'Subir Vuln Bank'
+
     - script: |
         mkdir -p $(Build.ArtifactStagingDirectory)/zap-output
         chmod 777 $(Build.ArtifactStagingDirectory)/zap-output
       displayName: 'Prep diretório ZAP'
+
     - script: |
         docker run --rm \
           --network host \
@@ -32,6 +57,7 @@ jobs:
             -I
       displayName: 'ZAP Full Scan'
       continueOnError: true
+
     - task: PublishBuildArtifacts@1
       inputs:
         PathtoPublish: '$(Build.ArtifactStagingDirectory)/zap-output'
