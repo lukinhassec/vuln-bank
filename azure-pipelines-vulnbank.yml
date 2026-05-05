@@ -5,7 +5,7 @@ variables:
   VULN_BANK_PORT: 5000
 jobs:
   - job: VulnBankLab
-    displayName: 'Vuln Bank + Horusec SAST + ZAP DAST'
+    displayName: 'Vuln Bank + Horusec SAST + ZAP DAST Autenticado'
     timeoutInMinutes: 59
     steps:
     - script: |
@@ -32,13 +32,27 @@ jobs:
       condition: always()
 
     - script: |
-        git clone https://github.com/Commando-X/vuln-bank.git
-        cd vuln-bank
         docker compose up -d --build
         echo "Aguardando Vuln Bank inicializar..."
         sleep 30
         curl -sf http://localhost:$(VULN_BANK_PORT) > /dev/null && echo "Vuln Bank UP" || exit 1
       displayName: 'Subir Vuln Bank'
+
+    - script: |
+        echo "Criando usuário de teste para o ZAP..."
+        curl -sf -X POST http://localhost:$(VULN_BANK_PORT)/register \
+          -H "Content-Type: application/json" \
+          -d '{"username":"zapuser_pipeline","password":"ZapP@ss123"}' \
+          && echo "Usuário criado com sucesso" || exit 1
+        
+        echo "Validando login..."
+        TOKEN=$(curl -sf -X POST http://localhost:$(VULN_BANK_PORT)/login \
+          -H "Content-Type: application/json" \
+          -d '{"username":"zapuser_pipeline","password":"ZapP@ss123"}' \
+          | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+        
+        [ -n "$TOKEN" ] && echo "Login OK - token recebido" || exit 1
+      displayName: 'Criar usuário ZAP e validar login'
 
     - script: |
         mkdir -p $(Build.ArtifactStagingDirectory)/zap-output
@@ -49,13 +63,10 @@ jobs:
         docker run --rm \
           --network host \
           -v $(Build.ArtifactStagingDirectory)/zap-output:/zap/wrk:rw \
+          -v $(Build.SourcesDirectory)/zap-auth.yaml:/zap/zap-auth.yaml:ro \
           ghcr.io/zaproxy/zaproxy:stable \
-          zap-full-scan.py \
-            -t http://localhost:$(VULN_BANK_PORT) \
-            -r zap-report.html \
-            -J zap-report.json \
-            -I
-      displayName: 'ZAP Full Scan'
+          zap.sh -cmd -autorun /zap/zap-auth.yaml
+      displayName: 'ZAP Full Scan Autenticado'
       continueOnError: true
 
     - task: PublishBuildArtifacts@1
