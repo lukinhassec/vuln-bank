@@ -1,0 +1,48 @@
+trigger: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  VULN_BANK_PORT: 5000
+
+jobs:
+  - job: VulnBankLab
+    displayName: 'Vuln Bank + ZAP DAST'
+    timeoutInMinutes: 59
+
+    steps:
+    - script: |
+        git clone https://github.com/Commando-X/vuln-bank.git
+        cd vuln-bank
+        docker compose up -d --build
+        echo "Aguardando Vuln Bank inicializar..."
+        sleep 30
+        curl -sf http://localhost:$(VULN_BANK_PORT) > /dev/null && echo "Vuln Bank UP" || exit 1
+      displayName: 'Subir Vuln Bank'
+
+    - script: |
+        mkdir -p $(Build.ArtifactStagingDirectory)/zap-output
+        chmod 777 $(Build.ArtifactStagingDirectory)/zap-output
+      displayName: 'Prep diretório ZAP'
+
+    - script: |
+        docker run --rm \
+          --network host \
+          -v $(Build.ArtifactStagingDirectory)/zap-output:/zap/wrk:rw \
+          ghcr.io/zaproxy/zaproxy:stable \
+          zap-baseline.py \
+            -t http://localhost:$(VULN_BANK_PORT) \
+            -r zap-report.html \
+            -J zap-report.json \
+            -I
+      displayName: 'ZAP Baseline Scan'
+      continueOnError: true
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/zap-output'
+        ArtifactName: 'zap-reports'
+        publishLocation: 'Container'
+      displayName: 'Publicar relatório ZAP'
+      condition: always()
