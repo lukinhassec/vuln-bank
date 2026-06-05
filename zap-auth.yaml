@@ -15,7 +15,7 @@ env:
           loggedInRegex: "token"
           loggedOutRegex: "invalid|unauthorized|401"
       sessionManagement:
-        method: "httpAuthSessionManagement"  # fallback genérico
+        method: "httpAuthSessionManagement"
       users:
         - name: "testuser"
           credentials:
@@ -24,7 +24,6 @@ env:
   parameters:
     failOnError: false
     progressToStdout: true
-
 jobs:
   - type: spider
     parameters:
@@ -35,7 +34,7 @@ jobs:
     parameters:
       context: "vulnbank"
       user: "testuser"
-      maxDuration: 30
+      maxScanDurationInMins: 30
   - type: report
     parameters:
       template: "traditional-html"
