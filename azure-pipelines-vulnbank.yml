@@ -8,6 +8,7 @@ jobs:
     displayName: 'Vuln Bank + Horusec SAST + ZAP DAST Autenticado'
     timeoutInMinutes: 59
     steps:
+
     - script: |
         curl -fsSL https://raw.githubusercontent.com/ZupIT/horusec/main/deployments/scripts/install.sh | bash -s latest-beta
       displayName: 'Instalar Horusec'
@@ -47,7 +48,8 @@ jobs:
         echo "Fazendo login e extraindo token..."
         TOKEN=$(curl -s -X POST http://localhost:$(VULN_BANK_PORT)/login \
           -H "Content-Type: application/json" \
-          -d '{"username":"zapuser_pipeline","password":"ZapP@ss123"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          -d '{"username":"zapuser_pipeline","password":"ZapP@ss123"}' \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
         if [ -z "$TOKEN" ]; then
           echo "##[error]Falha ao extrair token JWT"
@@ -61,14 +63,75 @@ jobs:
     - script: |
         mkdir -p $(Build.ArtifactStagingDirectory)/zap-output
         chmod 777 $(Build.ArtifactStagingDirectory)/zap-output
-      displayName: 'Prep diretório ZAP'
+
+        TOKEN="$(ZAP_AUTH_TOKEN)"
+
+        cat > $(Build.SourcesDirectory)/zap-auth-run.yaml << ZAPEOF
+        env:
+          contexts:
+            - name: "vulnbank"
+              urls:
+                - "http://localhost:5000"
+              includePaths:
+                - "http://localhost:5000.*"
+              authentication:
+                method: "json"
+                parameters:
+                  loginRequestUrl: "http://localhost:5000/login"
+                  loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+                verification:
+                  method: "response"
+                  loggedInRegex: "token"
+                  loggedOutRegex: "invalid|unauthorized|401"
+              sessionManagement:
+                method: "cookie"
+              users:
+                - name: "testuser"
+                  credentials:
+                    username: "zapuser_pipeline"
+                    password: "ZapP@ss123"
+          parameters:
+            failOnError: false
+            progressToStdout: true
+        jobs:
+          - type: replacer
+            parameters:
+              description: "Inject JWT"
+              matchType: "req_header_str"
+              matchString: "Authorization"
+              replacement: "Bearer ${TOKEN}"
+              enabled: true
+          - type: spider
+            parameters:
+              context: "vulnbank"
+              user: "testuser"
+              maxDuration: 5
+          - type: activeScan
+            parameters:
+              context: "vulnbank"
+              user: "testuser"
+              maxScanDurationInMins: 30
+          - type: report
+            parameters:
+              template: "traditional-html"
+              reportDir: "/zap/wrk"
+              reportFile: "zap-report.html"
+          - type: report
+            parameters:
+              template: "traditional-json"
+              reportDir: "/zap/wrk"
+              reportFile: "zap-report.json"
+        ZAPEOF
+
+        echo "Conteúdo do zap-auth-run.yaml gerado:"
+        cat $(Build.SourcesDirectory)/zap-auth-run.yaml
+      displayName: 'Prep diretório ZAP e gerar config'
 
     - script: |
         docker run --rm \
           --network host \
-          -e ZAP_AUTH_TOKEN=$(ZAP_AUTH_TOKEN) \
           -v $(Build.ArtifactStagingDirectory)/zap-output:/zap/wrk:rw \
-          -v $(Build.SourcesDirectory)/zap-auth.yaml:/zap/zap-auth.yaml:ro \
+          -v $(Build.SourcesDirectory)/zap-auth-run.yaml:/zap/zap-auth.yaml:ro \
           ghcr.io/zaproxy/zaproxy:stable \
           zap.sh -cmd -autorun /zap/zap-auth.yaml
       displayName: 'ZAP Full Scan Autenticado'
