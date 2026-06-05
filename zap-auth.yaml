@@ -15,7 +15,7 @@ env:
           loggedInRegex: "token"
           loggedOutRegex: "invalid|unauthorized|401"
       sessionManagement:
-        method: "httpAuthSessionManagement"
+        method: "cookie"
       users:
         - name: "testuser"
           credentials:
@@ -24,22 +24,35 @@ env:
   parameters:
     failOnError: false
     progressToStdout: true
+
 jobs:
+  - type: replacer
+    parameters:
+      rules:
+        - description: "Inject JWT token"
+          matchType: "req_header"
+          matchString: "Authorization"
+          replacement: "Bearer ${ZAP_AUTH_TOKEN}"
+          initiators: []
+
   - type: spider
     parameters:
       context: "vulnbank"
       user: "testuser"
       maxDuration: 5
+
   - type: activeScan
     parameters:
       context: "vulnbank"
       user: "testuser"
       maxScanDurationInMins: 30
+
   - type: report
     parameters:
       template: "traditional-html"
       reportDir: "/zap/wrk"
       reportFile: "zap-report.html"
+
   - type: report
     parameters:
       template: "traditional-json"
