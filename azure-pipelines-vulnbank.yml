@@ -58,6 +58,14 @@ jobs:
 
         echo "Token extraído (length=${#TOKEN})"
         echo "##vso[task.setvariable variable=ZAP_AUTH_TOKEN;issecret=true]$TOKEN"
+
+        # Capturar account_number do usuário registrado (pra usar no transfer)
+        ACCOUNT=$(curl -s -X POST http://localhost:$(VULN_BANK_PORT)/login \
+          -H "Content-Type: application/json" \
+          -d '{"username":"zapuser_pipeline","password":"ZapP@ss123"}' \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('account_number','1218330158'))")
+        echo "Account number: $ACCOUNT"
+        echo "##vso[task.setvariable variable=ZAP_ACCOUNT]$ACCOUNT"
       displayName: 'Criar usuário ZAP e extrair token'
 
     - script: |
@@ -66,8 +74,9 @@ jobs:
         chmod 777 $ZAP_WRK
 
         TOKEN="$(ZAP_AUTH_TOKEN)"
+        ACCOUNT="$(ZAP_ACCOUNT)"
 
-        # HTTP Sender script: injeta Authorization Bearer em TODA request do ZAP
+        # HTTP Sender script - injeta Authorization Bearer em TODA request
         cat > $ZAP_WRK/add-bearer-token.js << JSEOF
         function sendingRequest(msg, initiator, helper) {
             var TOKEN = "${TOKEN}";
@@ -80,16 +89,13 @@ jobs:
         }
         JSEOF
 
-        # Plano de automação ZAP
-        cat > $ZAP_WRK/zap-plan.yaml << 'YAMLEOF'
+        # Plano de automação ZAP - com requestor pra popular sitemap com POSTs
+        cat > $ZAP_WRK/zap-plan.yaml << YAMLEOF
         env:
           contexts:
             - name: "vulnbank"
               urls:
                 - "http://localhost:5000"
-                - "http://localhost:5000/api/login"
-                - "http://localhost:5000/api/check_balance"
-                - "http://localhost:5000/api/transfer"
               includePaths:
                 - "http://localhost:5000.*"
           parameters:
@@ -107,6 +113,22 @@ jobs:
             parameters:
               action: "enable"
               name: "add-bearer-token"
+          - type: requestor
+            parameters:
+              user: ""
+            requests:
+              - url: "http://localhost:5000/api/login"
+                method: "POST"
+                headers:
+                  - "Content-Type:application/json"
+                data: '{"username":"zapuser_pipeline","password":"ZapP@ss123"}'
+              - url: "http://localhost:5000/api/transfer"
+                method: "POST"
+                headers:
+                  - "Content-Type:application/json"
+                data: '{"to_account":"${ACCOUNT}","amount":10}'
+              - url: "http://localhost:5000/api/check_balance?account_number=${ACCOUNT}"
+                method: "GET"
           - type: spider
             parameters:
               context: "vulnbank"
