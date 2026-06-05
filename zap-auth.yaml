@@ -8,7 +8,6 @@ env:
       authentication:
         method: "json"
         parameters:
-          loginPageUrl: "http://localhost:5000/login"
           loginRequestUrl: "http://localhost:5000/login"
           loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
         verification:
@@ -16,9 +15,7 @@ env:
           loggedInRegex: "token"
           loggedOutRegex: "invalid|unauthorized|401"
       sessionManagement:
-        method: "cookie"
-        parameters:
-          cookieName: "token"
+        method: "httpAuthSessionManagement"  # fallback genérico
       users:
         - name: "testuser"
           credentials:
@@ -34,19 +31,16 @@ jobs:
       context: "vulnbank"
       user: "testuser"
       maxDuration: 5
-
   - type: activeScan
     parameters:
       context: "vulnbank"
       user: "testuser"
       maxDuration: 30
-
   - type: report
     parameters:
       template: "traditional-html"
       reportDir: "/zap/wrk"
       reportFile: "zap-report.html"
-
   - type: report
     parameters:
       template: "traditional-json"
