@@ -39,17 +39,24 @@ jobs:
       displayName: 'Subir Vuln Bank'
 
     - script: |
-        echo "Testando register..."
-        curl -v -X POST http://localhost:$(VULN_BANK_PORT)/register \
+        echo "Registrando usuário..."
+        curl -s -X POST http://localhost:$(VULN_BANK_PORT)/register \
           -H "Content-Type: application/json" \
-          -d '{"username":"zapuser_pipeline","password":"ZapP@ss123"}'
-        
-        echo "Testando login..."
-        curl -v -X POST http://localhost:$(VULN_BANK_PORT)/login \
+          -d '{"username":"zapuser_pipeline","password":"ZapP@ss123"}' || true
+
+        echo "Fazendo login e extraindo token..."
+        TOKEN=$(curl -s -X POST http://localhost:$(VULN_BANK_PORT)/login \
           -H "Content-Type: application/json" \
-          -d '{"username":"zapuser_pipeline","password":"ZapP@ss123"}'
-      displayName: 'Criar usuário ZAP e validar login'
-      continueOnError: true
+          -d '{"username":"zapuser_pipeline","password":"ZapP@ss123"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+        if [ -z "$TOKEN" ]; then
+          echo "##[error]Falha ao extrair token JWT"
+          exit 1
+        fi
+
+        echo "Token extraído com sucesso"
+        echo "##vso[task.setvariable variable=ZAP_AUTH_TOKEN]$TOKEN"
+      displayName: 'Criar usuário ZAP e extrair token'
 
     - script: |
         mkdir -p $(Build.ArtifactStagingDirectory)/zap-output
@@ -59,6 +66,7 @@ jobs:
     - script: |
         docker run --rm \
           --network host \
+          -e ZAP_AUTH_TOKEN=$(ZAP_AUTH_TOKEN) \
           -v $(Build.ArtifactStagingDirectory)/zap-output:/zap/wrk:rw \
           -v $(Build.SourcesDirectory)/zap-auth.yaml:/zap/zap-auth.yaml:ro \
           ghcr.io/zaproxy/zaproxy:stable \
