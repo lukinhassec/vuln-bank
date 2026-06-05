@@ -56,60 +56,64 @@ jobs:
           exit 1
         fi
 
-        echo "Token extraído com sucesso"
-        echo "##vso[task.setvariable variable=ZAP_AUTH_TOKEN]$TOKEN"
+        echo "Token extraído (length=${#TOKEN})"
+        echo "##vso[task.setvariable variable=ZAP_AUTH_TOKEN;issecret=true]$TOKEN"
       displayName: 'Criar usuário ZAP e extrair token'
 
     - script: |
-        mkdir -p $(Build.ArtifactStagingDirectory)/zap-output
-        chmod 777 $(Build.ArtifactStagingDirectory)/zap-output
+        ZAP_WRK=$(Build.ArtifactStagingDirectory)/zap-output
+        mkdir -p $ZAP_WRK
+        chmod 777 $ZAP_WRK
 
         TOKEN="$(ZAP_AUTH_TOKEN)"
 
-        cat > $(Build.SourcesDirectory)/zap-auth-run.yaml << ZAPEOF
+        # HTTP Sender script: injeta Authorization Bearer em TODA request do ZAP
+        cat > $ZAP_WRK/add-bearer-token.js << JSEOF
+        function sendingRequest(msg, initiator, helper) {
+            var TOKEN = "${TOKEN}";
+            if (TOKEN && TOKEN.length > 0) {
+                msg.getRequestHeader().setHeader("Authorization", "Bearer " + TOKEN);
+            }
+        }
+
+        function responseReceived(msg, initiator, helper) {
+        }
+        JSEOF
+
+        # Plano de automação ZAP
+        cat > $ZAP_WRK/zap-plan.yaml << 'YAMLEOF'
         env:
           contexts:
             - name: "vulnbank"
               urls:
                 - "http://localhost:5000"
+                - "http://localhost:5000/api/login"
+                - "http://localhost:5000/api/check_balance"
+                - "http://localhost:5000/api/transfer"
               includePaths:
                 - "http://localhost:5000.*"
-              authentication:
-                method: "json"
-                parameters:
-                  loginRequestUrl: "http://localhost:5000/login"
-                  loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
-                verification:
-                  method: "response"
-                  loggedInRegex: "token"
-                  loggedOutRegex: "invalid|unauthorized|401"
-              sessionManagement:
-                method: "cookie"
-              users:
-                - name: "testuser"
-                  credentials:
-                    username: "zapuser_pipeline"
-                    password: "ZapP@ss123"
           parameters:
             failOnError: false
             progressToStdout: true
         jobs:
-          - type: replacer
+          - type: script
             parameters:
-              description: "Inject JWT"
-              matchType: "req_header_str"
-              matchString: "Authorization"
-              replacement: "Bearer ${TOKEN}"
-              enabled: true
+              action: "add"
+              type: "httpsender"
+              engine: "ECMAScript : Graal.js"
+              name: "add-bearer-token"
+              source: "/zap/wrk/add-bearer-token.js"
+          - type: script
+            parameters:
+              action: "enable"
+              name: "add-bearer-token"
           - type: spider
             parameters:
               context: "vulnbank"
-              user: "testuser"
               maxDuration: 5
           - type: activeScan
             parameters:
               context: "vulnbank"
-              user: "testuser"
               maxScanDurationInMins: 30
           - type: report
             parameters:
@@ -121,19 +125,20 @@ jobs:
               template: "traditional-json"
               reportDir: "/zap/wrk"
               reportFile: "zap-report.json"
-        ZAPEOF
+        YAMLEOF
 
-        echo "Conteúdo do zap-auth-run.yaml gerado:"
-        cat $(Build.SourcesDirectory)/zap-auth-run.yaml
+        echo "===== zap-plan.yaml ====="
+        cat $ZAP_WRK/zap-plan.yaml
+        echo "===== add-bearer-token.js criado ====="
+        ls -la $ZAP_WRK/add-bearer-token.js
       displayName: 'Prep diretório ZAP e gerar config'
 
     - script: |
         docker run --rm \
           --network host \
           -v $(Build.ArtifactStagingDirectory)/zap-output:/zap/wrk:rw \
-          -v $(Build.SourcesDirectory)/zap-auth-run.yaml:/zap/zap-auth.yaml:ro \
           ghcr.io/zaproxy/zaproxy:stable \
-          zap.sh -cmd -autorun /zap/zap-auth.yaml
+          zap.sh -cmd -autorun /zap/wrk/zap-plan.yaml
       displayName: 'ZAP Full Scan Autenticado'
       continueOnError: true
 
